@@ -1007,9 +1007,10 @@ class JavaProfiler(SpawningProcessProfilerBase):
         java_full_hserr: bool,
         java_include_method_modifiers: bool,
         java_line_numbers: str,
+        min_duration: int = 10,
     ):
         assert java_mode == "ap", "Java profiler should not be initialized, wrong java_mode value given"
-        super().__init__(frequency, duration, profiler_state)
+        super().__init__(frequency, duration, profiler_state, min_duration)
         # Alloc interval is passed in frequency in allocation profiling (in bytes, as async-profiler expects)
         self._interval = (
             frequency_to_ap_interval(frequency) if self._profiler_state.profiling_mode == "cpu" else frequency
@@ -1388,6 +1389,16 @@ class JavaProfiler(SpawningProcessProfilerBase):
         return pgrep_maps(DETECTED_JAVA_PROCESSES_REGEX)
 
     def _should_profile_process(self, process: Process) -> bool:
+        # Skip short-lived processes - if a process is younger than min_duration,
+        # it's likely to exit before profiling completes
+        try:
+            process_age = self._get_process_age(process)
+            if process_age < self._min_duration:
+                logger.debug(f"Skipping young Java process {process.pid} (age: {process_age:.1f}s < min_duration: {self._min_duration}s)")
+                return False
+        except Exception as e:
+            logger.debug(f"Could not determine age for Java process {process.pid}: {e}")
+
         return search_proc_maps(process, DETECTED_JAVA_PROCESSES_REGEX) is not None
 
     def start(self) -> None:

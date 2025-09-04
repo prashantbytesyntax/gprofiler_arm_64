@@ -188,8 +188,9 @@ class PySpyProfiler(SpawningProcessProfilerBase):
         *,
         add_versions: bool,
         python_pyspy_process: List[int],
+        min_duration: int = 10,
     ):
-        super().__init__(frequency, duration, profiler_state)
+        super().__init__(frequency, duration, profiler_state, min_duration)
         self.add_versions = add_versions
         self._metadata = PythonMetadata(self._profiler_state.stop_event)
         self._python_pyspy_process = python_pyspy_process
@@ -291,6 +292,16 @@ class PySpyProfiler(SpawningProcessProfilerBase):
         if process.pid == os.getpid():
             return True
 
+        # Skip short-lived processes - if a process is younger than min_duration,
+        # it's likely to exit before profiling completes
+        try:
+            process_age = self._get_process_age(process)
+            if process_age < self._min_duration:
+                logger.debug(f"Skipping young Python process {process.pid} (age: {process_age:.1f}s < min_duration: {self._min_duration}s)")
+                return True
+        except Exception as e:
+            logger.debug(f"Could not determine age for Python process {process.pid}: {e}")
+
         cmdline = " ".join(process.cmdline())
         if any(item in cmdline for item in _BLACKLISTED_PYTHON_PROCS):
             return True
@@ -375,6 +386,7 @@ class PythonProfiler(ProfilerInterface):
         python_pyperf_user_stacks_pages: Optional[int],
         python_pyperf_verbose: bool,
         python_pyspy_process: List[int],
+        min_duration: int = 10,
     ):
         if python_mode == "py-spy":
             python_mode = "pyspy"
@@ -394,6 +406,7 @@ class PythonProfiler(ProfilerInterface):
                 python_add_versions,
                 python_pyperf_user_stacks_pages,
                 python_pyperf_verbose,
+                min_duration,
             )
         else:
             self._ebpf_profiler = None
@@ -405,6 +418,7 @@ class PythonProfiler(ProfilerInterface):
                 profiler_state,
                 add_versions=python_add_versions,
                 python_pyspy_process=python_pyspy_process,
+                min_duration=min_duration,
             )
         else:
             self._pyspy_profiler = None
@@ -419,6 +433,7 @@ class PythonProfiler(ProfilerInterface):
             add_versions: bool,
             user_stacks_pages: Optional[int],
             verbose: bool,
+            min_duration: int,
         ) -> Optional[PythonEbpfProfiler]:
             try:
                 profiler = PythonEbpfProfiler(
@@ -428,6 +443,7 @@ class PythonProfiler(ProfilerInterface):
                     add_versions=add_versions,
                     user_stacks_pages=user_stacks_pages,
                     verbose=verbose,
+                    min_duration=min_duration,
                 )
                 profiler.test()
                 return profiler
